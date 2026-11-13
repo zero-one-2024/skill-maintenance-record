@@ -1,0 +1,4 @@
+interface:
+  display_name: "Skill Maintenance Records"
+  short_description: "Create concise project skill release records"
+  default_prompt: "Use $skill-maintenance-record to create or update this project’s skill maintenance record."
