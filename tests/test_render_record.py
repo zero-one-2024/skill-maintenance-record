@@ -6,6 +6,7 @@ import importlib.util
 import json
 from pathlib import Path
 import re
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -190,6 +191,42 @@ class RenderRecordTests(unittest.TestCase):
             result = subprocess.run(command, capture_output=True, text=True)
             self.assertEqual(result.returncode, 2)
             self.assertEqual(output.read_text(encoding="utf-8"), expected)
+
+    def test_readme_links_resolve_inside_standalone_skill(self):
+        for filename in ("README.md", "README.zh-CN.md"):
+            content = (SKILL / filename).read_text(encoding="utf-8")
+            for target in re.findall(r"\[[^\]]+\]\(([^)]+)\)", content):
+                if "://" in target or target.startswith("#"):
+                    continue
+                with self.subTest(readme=filename, target=target):
+                    destination = (SKILL / target.split("#", 1)[0]).resolve()
+                    self.assertTrue(destination.is_relative_to(SKILL.resolve()))
+                    self.assertTrue(destination.is_file())
+
+    def test_readme_renderer_commands_and_table_headers_match_actual_output(self):
+        reference = (SKILL / "references" / "record-format.md").read_text(encoding="utf-8")
+        example = json.loads(re.search(r"```json\n(.*?)\n```", reference, re.S).group(1))
+        for filename in ("README.md", "README.zh-CN.md"):
+            with self.subTest(readme=filename), tempfile.TemporaryDirectory() as temp:
+                content = (SKILL / filename).read_text(encoding="utf-8")
+                source, output = Path(temp) / "record.json", Path(temp) / "draft.xml"
+                source.write_text(json.dumps(example, ensure_ascii=False), encoding="utf-8")
+                line = next(line for line in content.splitlines()
+                            if line.startswith("python3 scripts/render_record.py "))
+                command = shlex.split(line)
+                command[0] = sys.executable
+                command[command.index("--input") + 1] = str(source)
+                command[command.index("--output") + 1] = str(output)
+                result = subprocess.run(command, cwd=SKILL, capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                root = ET.fromstring("<root>" + output.read_text(encoding="utf-8") + "</root>")
+                documented_headers = [
+                    [cell.strip() for cell in line.strip().strip("|").split("|")]
+                    for line in content.splitlines() if line.startswith("| 技能名称 |")
+                ]
+                actual_headers = [[words(cell) for cell in table.findall("thead/tr/th")]
+                                  for table in root.findall("table")]
+                self.assertEqual(documented_headers, actual_headers)
 
 
 if __name__ == "__main__":
